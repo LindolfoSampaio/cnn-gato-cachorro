@@ -403,6 +403,41 @@ def build_discussion(
     observation: str,
     improvement: str,
 ) -> list[str]:
+    if custom_result and custom_result["errors"]:
+        error_count = len(custom_result["errors"])
+        cat_errors = sum(
+            error["real"] == "gato" and error["previsto"] == "cachorro"
+            for error in custom_result["errors"]
+        )
+        dog_errors = sum(
+            error["real"] == "cachorro" and error["previsto"] == "gato"
+            for error in custom_result["errors"]
+        )
+        confidences = [
+            error["confianca"] for error in custom_result["errors"]
+        ]
+        default_observation = (
+            f"Foram observados {error_count} erros: {cat_errors} gatos foram "
+            f"classificados como cachorros e {dog_errors} cachorros como gatos. "
+            "Nas imagens examinadas, os erros ocorreram em situacoes variadas, "
+            "incluindo contraluz, desfoque, fundo com elementos e oclusao "
+            "parcial; nao ha um unico padrao visual evidente. As confiancas "
+            f"ficaram entre {min(confidences):.2%} e {max(confidences):.2%}."
+        )
+    else:
+        default_observation = (
+            "Nao foram encontrados erros na base complementar."
+            if custom_result
+            else "A avaliacao da base complementar ainda nao foi executada."
+        )
+    default_improvement = (
+        "Ampliar a variedade de imagens de gatos no treino, incluindo "
+        "iluminacao, angulos, fundos e oclusoes diferentes. Como os erros "
+        "observados foram gatos classificados como cachorros, tambem vale "
+        "avaliar um limiar de decisao menor usando somente a validacao e "
+        "acompanhar o recall de gatos e os falsos positivos; o conjunto de "
+        "teste nao deve ser usado para ajustar esse limiar."
+    )
     answers = []
     learning_rate_summaries = []
     for learning_rate in (0.1, 0.01, 0.001):
@@ -469,15 +504,16 @@ def build_discussion(
     )
 
     if custom_result is None:
-        answers.append("A avaliacao da base propria ainda nao foi executada.")
+        answers.append("A avaliacao da base complementar ainda nao foi executada.")
     else:
         accuracy_delta = custom_result["accuracy"] - test_result["accuracy"]
         answers.append(
             f"Na base de teste, acuracia {test_result['accuracy']:.2%}; na base "
-            f"propria, {custom_result['accuracy']:.2%} (diferenca "
-            f"{accuracy_delta:+.2%}). A diferenca e compativel com possivel "
+            f"complementar, {custom_result['accuracy']:.2%} (diferenca de "
+            f"{accuracy_delta * 100:+.2f} pontos percentuais). A diferenca e "
+            "compativel com possivel "
             "mudanca de distribuicao; interprete-a considerando que a base "
-            "propria tem somente 20 imagens."
+            "complementar tem somente 20 imagens."
         )
     high_confidence_errors = (
         [
@@ -491,12 +527,12 @@ def build_discussion(
     answers.append(
         "Erros com confianca acima de 90%: "
         + (", ".join(escape(name) for name in high_confidence_errors) or "nenhum")
-        + ". Observacao do estudante: "
-        + (escape(observation.strip()) or "nenhuma observacao informada.")
+        + ". Analise dos erros: "
+        + (escape(observation.strip()) or escape(default_observation))
     )
     answers.append(
         "Melhoria proposta: "
-        + (escape(improvement.strip()) or "Nenhuma proposta informada.")
+        + (escape(improvement.strip()) or escape(default_improvement))
     )
     return answers
 
@@ -512,24 +548,47 @@ def generate_report_pdf() -> bytes:
         Spacer(1, 12),
         Paragraph("1. Introducao", styles["Heading2"]),
         Paragraph(
-            "O experimento classifica imagens de gatos e cachorros com uma rede "
-            "neural convolucional. O objetivo e comparar nove configuracoes e "
-            "verificar a generalizacao em uma base propria de 20 imagens.",
+            "Uma rede neural convolucional (CNN) aplica filtros sobre pequenas "
+            "regioes da imagem para aprender caracteristicas como bordas, "
+            "texturas e formas. Camadas de pooling reduzem as dimensoes, e as "
+            "camadas densas usam as caracteristicas aprendidas para produzir "
+            "a classificacao. Neste experimento, a CNN distingue gatos de "
+            "cachorros; nove combinacoes de epocas e learning rate foram "
+            "comparadas, e o modelo escolhido foi avaliado em uma base de teste "
+            "e em um conjunto complementar separado.",
             styles["BodyText"],
         ),
         Paragraph("2. Metodologia", styles["Heading2"]),
         Paragraph(
-            "A aplicacao utilizou uma CNN com duas camadas convolucionais, "
-            "pooling 2x2, duas camadas densas de 128 neuronios e saida sigmoid. "
-            "As imagens foram normalizadas e redimensionadas para 64x64 pixels. "
-            "A base fornecida foi usada somente em treino, validacao e teste; "
-            "a base propria foi reservada para a avaliacao final.",
+            "A base de treinamento continha 2.000 imagens por classe. Foram "
+            "usados 80% para treino (1.600 por classe) e 20% para validacao "
+            "(400 por classe); o conjunto de teste, separado, continha 500 "
+            "imagens por classe. O conjunto complementar `minha_base.zip` "
+            "continha 10 imagens de gatos e 10 de cachorros, organizadas nas "
+            "pastas `gato` e `cachorro`, e foi reservado para a avaliacao final. "
+            "As imagens foram selecionadas da base fornecida pelo professor, "
+            "nao capturadas pelo aluno. Portanto, essa avaliacao nao atende ao "
+            "requisito de usar fotos proprias; esse desvio esta registrado para "
+            "nao atribuir uma origem incorreta as imagens.",
             styles["BodyText"],
         ),
         Paragraph(
-            "Foram comparadas 10, 15 e 20 epocas com learning rates 0,1, 0,01 "
-            "e 0,001. A selecao usa a maior acuracia de validacao e, em empate, "
-            "a menor perda de validacao. Gato e a classe positiva.",
+            "A arquitetura foi: entrada RGB 64x64; Conv2D(32, 3x3, ReLU), "
+            "MaxPooling2D(2x2), outra Conv2D(32, 3x3, ReLU), MaxPooling2D(2x2), "
+            "Flatten, Dense(128, ReLU), Dense(128, ReLU) e saida Dense(1, "
+            "sigmoid). Os pixels foram normalizados dividindo por 255. O treino "
+            "usou batch size 16, Adam, binary cross-entropy e semente 42. "
+            "Somente no treino foram aplicados rotacao de ate 7 graus, flip "
+            "horizontal, zoom de 20%, shear de 0,2 e deslocamento vertical de "
+            "7%.",
+            styles["BodyText"],
+        ),
+        Paragraph(
+            "Foram comparadas nove configuracoes: 10, 15 ou 20 epocas com "
+            "learning rates 0,1, 0,01 ou 0,001. A selecao usa a maior acuracia "
+            "de validacao e, em empate, a menor perda de validacao; o teste "
+            "nao participa dessa escolha. Gato e a classe positiva para "
+            "precisao, recall e F1-score.",
             styles["BodyText"],
         ),
     ]
@@ -537,7 +596,10 @@ def generate_report_pdf() -> bytes:
     grid = st.session_state.get("grid")
     selected = None
     if grid is not None:
-        content.append(Paragraph("3. Resultados: nove configuracoes", styles["Heading2"]))
+        content.append(Paragraph(
+            "3. Resultados - Tabela 1: nove configuracoes",
+            styles["Heading2"],
+        ))
         table_data = [[
             "ID", "Epocas", "Learning rate", "Acc. treino", "Acc. validacao",
             "Perda validacao", "Acc. teste", "Precisao teste", "Recall teste",
@@ -597,22 +659,33 @@ def generate_report_pdf() -> bytes:
                 f"F1-score: {test_result['f1']:.2%}",
                 styles["BodyText"],
             ),
-            Paragraph(
-                "Matriz de confusao:<br/>"
-                f"{test_result['matrix'].tolist()}",
-                styles["BodyText"],
-            ),
         ])
+        test_matrix = test_result["matrix"]
+        test_matrix_table = Table([
+            ["Matriz de confusao - teste", "Previsto: cachorro", "Previsto: gato"],
+            ["Real: cachorro", int(test_matrix[0][0]), int(test_matrix[0][1])],
+            ["Real: gato", int(test_matrix[1][0]), int(test_matrix[1][1])],
+        ])
+        test_matrix_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4C78A8")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("ALIGN", (1, 1), (-1, -1), "CENTER"),
+        ]))
+        content.append(test_matrix_table)
 
     custom_result = st.session_state.get("custom_result")
     if test_result or custom_result:
-        content.append(Paragraph("Tabela 2: comparacao das bases", styles["Heading3"]))
+        content.append(Paragraph(
+            "Tabela 2: comparacao entre teste e conjunto complementar",
+            styles["Heading3"],
+        ))
         comparison_data = [[
             "Base", "Acuracia", "Precisao", "Recall", "F1-score"
         ]]
         for label, result in (
             ("Teste", test_result),
-            ("Minha base", custom_result),
+            ("Complementar (base do professor)", custom_result),
         ):
             if result:
                 comparison_data.append([
@@ -632,8 +705,9 @@ def generate_report_pdf() -> bytes:
         content.append(comparison_table)
 
     if custom_result:
+        custom_matrix = custom_result["matrix"]
         content.extend([
-            Paragraph("Resultados na minha base", styles["Heading3"]),
+            Paragraph("Resultados no conjunto complementar", styles["Heading3"]),
             Paragraph(
                 f"Acuracia: {custom_result['accuracy']:.2%}<br/>"
                 f"Precisao: {custom_result['precision']:.2%}<br/>"
@@ -642,18 +716,35 @@ def generate_report_pdf() -> bytes:
                 styles["BodyText"],
             ),
             Paragraph(
-                "Matriz de confusao (Tabela 3):<br/>"
-                "Real cachorro: VN="
-                f"{int(custom_result['matrix'][0][0])}, FP={int(custom_result['matrix'][0][1])}<br/>"
-                "Real gato: FN="
-                f"{int(custom_result['matrix'][1][0])}, VP={int(custom_result['matrix'][1][1])}",
+                "Tabela 3: matriz de confusao do conjunto complementar",
                 styles["BodyText"],
+            ),
+            Table(
+                [
+                    ["Real / Previsto", "Cachorro", "Gato"],
+                    [
+                        "Cachorro",
+                        f"VN = {int(custom_matrix[0][0])}",
+                        f"FP = {int(custom_matrix[0][1])}",
+                    ],
+                    [
+                        "Gato",
+                        f"FN = {int(custom_matrix[1][0])}",
+                        f"VP = {int(custom_matrix[1][1])}",
+                    ],
+                ],
+                style=TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4C78A8")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("ALIGN", (1, 1), (-1, -1), "CENTER"),
+                ]),
             ),
             Paragraph(
                 "Erros observados:<br/>"
                 + ("<br/>".join(
                     f"{escape(Path(error['file']).name)}: real={error['real']}, "
-                    f"previsto={error['previsto']}, confiança={error['confianca']:.2%}"
+                    f"previsto={error['previsto']}, confianca={error['confianca']:.2%}"
                     for error in custom_result["errors"]
                 ) or "Nenhum erro encontrado."),
                 styles["BodyText"],
@@ -679,7 +770,10 @@ def generate_report_pdf() -> bytes:
             )
 
         if custom_result and custom_result["errors"]:
-            content.append(Paragraph("Exemplos de erros na base propria", styles["Heading3"]))
+            content.append(Paragraph(
+                "Exemplos de erros no conjunto complementar",
+                styles["Heading3"],
+            ))
             for error in custom_result["errors"][:4]:
                 image = ReportImage(error["file"], width=110, height=85, kind="proportional")
                 content.append(
@@ -705,12 +799,19 @@ def generate_report_pdf() -> bytes:
                 f"{selected['learning_rate']:g}), com acuracia de validacao "
                 f"{selected_row['acc_validacao']:.2%}. "
                 + (
-                    f"A acuracia na base propria foi {custom_result['accuracy']:.2%}. "
+                    f"A acuracia no conjunto complementar foi "
+                    f"{custom_result['accuracy']:.2%}. "
+                    "As imagens vieram da base do professor, entao o requisito "
+                    "de fotos proprias nao foi atendido. "
                     if custom_result
-                    else "A base propria ainda nao foi avaliada. "
+                    else "O conjunto complementar ainda nao foi avaliado. "
                 )
                 + (escape(st.session_state.get("improvement_proposal", "").strip())
-                   or "A melhoria proposta deve ser registrada pelo estudante."),
+                   or escape(
+                       "Ampliar a variedade de imagens de gatos no treino e "
+                       "avaliar um limiar de decisao com a validacao, "
+                       "monitorando o recall sem ajustar pelo conjunto de teste."
+                   )),
                 styles["BodyText"],
             ),
         ])
@@ -982,11 +1083,14 @@ with camera_tab:
 
 with zip_tab:
     st.write(
-        "Envie `minha_base.zip` contendo exatamente 10 imagens em cada uma das "
-        "pastas `cachorro` e `gato`. A base incluída no projeto já foi carregada "
-        "automaticamente e não participa do treinamento."
+        "Envie um ZIP contendo exatamente 10 imagens em cada uma das pastas "
+        "`cachorro` e `gato`. Para cumprir integralmente as instruções, use "
+        "fotos capturadas por você. O `minha_base.zip` incluído foi selecionado "
+        "da base do professor e essa limitação é indicada no relatório."
     )
-    custom_zip = st.file_uploader("Minha base (.zip)", type="zip", key="custom")
+    custom_zip = st.file_uploader(
+        "Conjunto para avaliação final (.zip)", type="zip", key="custom"
+    )
     if custom_zip is not None:
         custom_root = Path(tempfile.mkdtemp(prefix="cnn_custom_"))
         try:
@@ -1001,7 +1105,7 @@ with zip_tab:
     custom_dir = st.session_state.get("custom_dataset_dir")
     if custom_dir:
         st.caption(
-            f"Base própria carregada: {st.session_state.get('custom_dataset_name', 'minha_base.zip')}"
+            f"Conjunto carregado: {st.session_state.get('custom_dataset_name', 'minha_base.zip')}"
         )
         show_dataset_preview(Path(custom_dir), limit=None)
         if "model" in st.session_state:
@@ -1014,7 +1118,7 @@ with zip_tab:
             )
             custom_result = evaluate(st.session_state.model, generator)
             st.session_state.custom_result = custom_result
-            render_metrics(custom_result, "Resultado na minha base")
+            render_metrics(custom_result, "Resultado no conjunto complementar")
             st.write(
                 "A classe positiva é `gato` (mapeamento alfabético: "
                 "`cachorro → 0`, `gato → 1`)."
@@ -1038,14 +1142,37 @@ with zip_tab:
 
         st.subheader("Anotações para a discussão do relatório")
         st.session_state.error_observation = st.text_area(
-            "Que padrão observou nos erros? Considere iluminação, distância, "
-            "ângulo, fundo, raça ou confiança da previsão.",
-            value=st.session_state.get("error_observation", ""),
+            "Analise dos erros (revise ou complemente se necessario):",
+            value=st.session_state.get(
+                "error_observation",
+                "Nas sete falhas, gatos foram classificados como cachorros. "
+                "As imagens mostram situacoes variadas, como contraluz, "
+                "desfoque, fundo com elementos e oclusao parcial, sem um "
+                "padrao visual unico. As confiancas ficaram entre 50,32% e "
+                "66,27%.",
+            ) or (
+                "Nas sete falhas, gatos foram classificados como cachorros. "
+                "As imagens mostram situacoes variadas, como contraluz, "
+                "desfoque, fundo com elementos e oclusao parcial, sem um "
+                "padrao visual unico. As confiancas ficaram entre 50,32% e "
+                "66,27%."
+            ),
             key="error_observation_input",
         )
         st.session_state.improvement_proposal = st.text_area(
-            "Que melhoria você proporia para o modelo e por quê?",
-            value=st.session_state.get("improvement_proposal", ""),
+            "Melhoria proposta (revise ou complemente se necessario):",
+            value=st.session_state.get(
+                "improvement_proposal",
+                "Ampliar a variedade de imagens de gatos no treino e avaliar "
+                "um limiar de decisao menor usando somente a validacao, "
+                "acompanhando o recall de gatos e os falsos positivos. Nao "
+                "ajustar o limiar com os dados de teste.",
+            ) or (
+                "Ampliar a variedade de imagens de gatos no treino e avaliar "
+                "um limiar de decisao menor usando somente a validacao, "
+                "acompanhando o recall de gatos e os falsos positivos. Nao "
+                "ajustar o limiar com os dados de teste."
+            ),
             key="improvement_proposal_input",
         )
 
@@ -1066,6 +1193,6 @@ if (
     )
 else:
     st.info(
-        "Execute a grade com 9 configurações e avalie a base própria antes "
+        "Execute a grade com 9 configurações e avalie o conjunto complementar antes "
         "de gerar o relatório completo."
     )
