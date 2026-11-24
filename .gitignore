@@ -2,3 +2,9 @@ __pycache__/
 *.py[cod]
 .venv/
 .streamlit/
+dataset/
+__MACOSX/
+minha_base_extraida/
+*.keras
+!modelo_e10_lr0.001.keras
+dataset_gato_cachorro.zip
